@@ -7,12 +7,12 @@
 
 To compile:
 
-gcc -o qt-faststart qt-faststart.c 
+Run ``make``
 
 
 To use: 
 
-./qt-faststart input.mp4 output.mp4 
+``./qt-faststart input.mp4 output.mp4`` 
 
 
 Easy, right? 
