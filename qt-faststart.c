@@ -54,7 +54,7 @@
 
 int fixForFastPlayback(char* source, char* dest) {
     FILE *infile = NULL;
-    FILE *outfile = NULL;
+//    FILE *outfile = NULL;
     unsigned char atom_bytes[ATOM_PREAMBLE_SIZE];
     uint32_t atom_type = 0;
     uint64_t atom_size = 0;
@@ -74,14 +74,8 @@ int fixForFastPlayback(char* source, char* dest) {
 
 
     /* open file using open instead of fopen*/
-    infile_fd = open(source, S_IRGRP);
+    infile_fd = open(source, O_RDONLY, S_IRGRP);
 
-    //infile = fopen(source, "rb");
-
-    //    if (!infile) {
-    //        perror(source);
-    //        goto error_out;
-    //    } 
     if (infile_fd < 0) {
         perror(source);
         goto error_out;
@@ -104,11 +98,15 @@ int fixForFastPlayback(char* source, char* dest) {
                         atom_size);
                 goto error_out;
             }
-            start_offset = lseek(infile_fd, -ATOM_PREAMBLE_SIZE, SEEK_CUR);
+            lseek(infile_fd, -ATOM_PREAMBLE_SIZE, SEEK_CUR);
+            perror("Seek to:");
+            printf("atom_size: %"PRIu64" \n", atom_size);
             if (read(infile_fd, ftyp_atom, atom_size) < 0) {
                 perror(source);
                 goto error_out;
             }
+            start_offset = atom_size;
+            printf("start_offset to verify: %"PRIu64" \n", start_offset);
         } else {
             /* 64-bit special case */
             if (atom_size == 1) {
@@ -150,85 +148,16 @@ int fixForFastPlayback(char* source, char* dest) {
             break;
     }
 
-
-    //    while (!feof(infile)) {
-    //        if (fread(atom_bytes, ATOM_PREAMBLE_SIZE, 1, infile) != 1) {
-    //            break;
-    //        }
-    //        atom_size = (uint32_t) BE_32(&atom_bytes[0]);
-    //        atom_type = BE_32(&atom_bytes[4]);
-    //
-    //        /* keep ftyp atom */
-    //        if (atom_type == FTYP_ATOM) {
-    //            ftyp_atom_size = atom_size;
-    //            free(ftyp_atom);
-    //            ftyp_atom = malloc(ftyp_atom_size);
-    //            if (!ftyp_atom) {
-    //                printf("could not allocate %"PRIu64" byte for ftyp atom\n",
-    //                        atom_size);
-    //                goto error_out;
-    //            }
-    //            fseeko(infile, -ATOM_PREAMBLE_SIZE, SEEK_CUR);
-    //            if (fread(ftyp_atom, atom_size, 1, infile) != 1) {
-    //                perror(source);
-    //                goto error_out;
-    //            }
-    //            start_offset = ftello(infile);
-    //        } else {
-    //
-    //            /* 64-bit special case */
-    //            if (atom_size == 1) {
-    //                if (fread(atom_bytes, ATOM_PREAMBLE_SIZE, 1, infile) != 1) {
-    //                    break;
-    //                }
-    //                atom_size = BE_64(&atom_bytes[0]);
-    //                fseeko(infile, atom_size - ATOM_PREAMBLE_SIZE * 2, SEEK_CUR);
-    //            } else {
-    //                fseeko(infile, atom_size - ATOM_PREAMBLE_SIZE, SEEK_CUR);
-    //            }
-    //        }
-    //        printf("%c%c%c%c %10"PRIu64" %"PRIu64"\n",
-    //                (atom_type >> 24) & 255,
-    //                (atom_type >> 16) & 255,
-    //                (atom_type >> 8) & 255,
-    //                (atom_type >> 0) & 255,
-    //                atom_offset,
-    //                atom_size);
-    //        if ((atom_type != FREE_ATOM) &&
-    //                (atom_type != JUNK_ATOM) &&
-    //                (atom_type != MDAT_ATOM) &&
-    //                (atom_type != MOOV_ATOM) &&
-    //                (atom_type != PNOT_ATOM) &&
-    //                (atom_type != SKIP_ATOM) &&
-    //                (atom_type != WIDE_ATOM) &&
-    //                (atom_type != PICT_ATOM) &&
-    //                (atom_type != UUID_ATOM) &&
-    //                (atom_type != FTYP_ATOM)) {
-    //            printf("encountered non-QT top-level atom (is this a Quicktime file?)\n");
-    //            break;
-    //        }
-    //        atom_offset += atom_size;
-    //
-    //        /* The atom header is 8 (or 16 bytes), if the atom size (which
-    //         * includes these 8 or 16 bytes) is less than that, we won't be
-    //         * able to continue scanning sensibly after this atom, so break. */
-    //        if (atom_size < 8)
-    //            break;
-    //    }
-
     if (atom_type != MOOV_ATOM) {
         printf("last atom in file was not a moov atom\n");
         free(ftyp_atom);
         close(infile_fd);
-//        fclose(infile);
         return 0;
     }
 
     /* moov atom was, in fact, the last atom in the chunk; load the whole
      * moov atom */
-//    fseeko(infile, -atom_size, SEEK_END);
     last_offset = lseek(infile_fd, -atom_size, SEEK_END);
-//    last_offset = ftello(infile);
     moov_atom_size = atom_size;
     moov_atom = malloc(moov_atom_size);
     if (!moov_atom) {
@@ -236,7 +165,6 @@ int fixForFastPlayback(char* source, char* dest) {
                 atom_size);
         goto error_out;
     }
-//    if (fread(moov_atom, atom_size, 1, infile) != 1) {
     if (read(infile_fd, moov_atom, atom_size) < 0) {
         perror(source);
         goto error_out;
@@ -250,7 +178,6 @@ int fixForFastPlayback(char* source, char* dest) {
     }
 
     /* close; will be re-opened later */
-//    fclose(infile);
     close(infile_fd);
     infile = NULL;
 
@@ -298,30 +225,19 @@ int fixForFastPlayback(char* source, char* dest) {
         }
     }
 
-    /* re-open the input file and open the output file */
-//    infile = fopen(source, "rb");
-//    if (!infile) {
-//        perror(source);
-//        goto error_out;
-//    }
-    infile_fd = open(source, S_IRGRP);
+    infile_fd = open(source, O_RDONLY);
     if (infile_fd < 0) {
         perror(source);
         goto error_out;
     }
 
     if (start_offset > 0) { /* seek after ftyp atom */
-//        fseeko(infile, start_offset, SEEK_SET);
         lseek(infile_fd, start_offset, SEEK_SET);
         last_offset -= start_offset;
     }
 
-//    outfile = fopen(dest, "wb");
-    outfile_fd = open(dest, S_IRWXU|S_IRWXG|S_IRWXO);
-//    if (!outfile) {
-//        perror(dest);
-//        goto error_out;
-//    }
+    outfile_fd = open(dest, O_WRONLY);
+    printf("outfile fd: %d\n", outfile_fd);
     if (outfile_fd < 0) {
         perror(dest);
         goto error_out;
@@ -330,7 +246,6 @@ int fixForFastPlayback(char* source, char* dest) {
     /* dump the same ftyp atom */
     if (ftyp_atom_size > 0) {
         printf(" writing ftyp atom...\n");
-//        if (fwrite(ftyp_atom, ftyp_atom_size, 1, outfile) != 1) {
         if (write(outfile_fd, ftyp_atom, ftyp_atom_size) < 0) {
             perror(dest);
             goto error_out;
@@ -339,7 +254,6 @@ int fixForFastPlayback(char* source, char* dest) {
 
     /* dump the new moov atom */
     printf(" writing moov atom...\n");
-//    if (fwrite(moov_atom, moov_atom_size, 1, outfile) != 1) {
     if (write(outfile_fd, moov_atom, moov_atom_size) < 0) {
         perror(dest);
         goto error_out;
@@ -376,11 +290,8 @@ int fixForFastPlayback(char* source, char* dest) {
     return 0;
 
 error_out:
-//    if (infile)
     if (infile_fd > 0)
-//        fclose(infile);
         close(infile_fd);
-//    if (outfile)
     if (outfile_fd > 0)
         close(outfile_fd);
     free(moov_atom);
