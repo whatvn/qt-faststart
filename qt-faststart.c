@@ -52,9 +52,7 @@
 #define ATOM_PREAMBLE_SIZE 8
 #define COPY_BUFFER_SIZE 1024
 
-int fixForFastPlayback(char* source, char* dest) {
-    FILE *infile = NULL;
-//    FILE *outfile = NULL;
+int fixForFastPlayback(char* path) {
     unsigned char atom_bytes[ATOM_PREAMBLE_SIZE];
     uint32_t atom_type = 0;
     uint64_t atom_size = 0;
@@ -68,16 +66,15 @@ int fixForFastPlayback(char* source, char* dest) {
     uint32_t offset_count;
     uint64_t current_offset;
     uint64_t start_offset = 0;
-    unsigned char copy_buffer[COPY_BUFFER_SIZE];
-    int bytes_to_copy;
     int infile_fd, outfile_fd;
+    unsigned char *temp_buf = NULL;
 
 
     /* open file using open instead of fopen*/
-    infile_fd = open(source, O_RDONLY, S_IRGRP);
+    infile_fd = open(path, O_RDONLY, S_IRGRP);
 
     if (infile_fd < 0) {
-        perror(source);
+        perror(path);
         goto error_out;
     }
 
@@ -102,7 +99,7 @@ int fixForFastPlayback(char* source, char* dest) {
             perror("Seek to:");
             printf("atom_size: %"PRIu64" \n", atom_size);
             if (read(infile_fd, ftyp_atom, atom_size) < 0) {
-                perror(source);
+                perror(path);
                 goto error_out;
             }
             start_offset = atom_size;
@@ -166,7 +163,7 @@ int fixForFastPlayback(char* source, char* dest) {
         goto error_out;
     }
     if (read(infile_fd, moov_atom, atom_size) < 0) {
-        perror(source);
+        perror(path);
         goto error_out;
     }
 
@@ -177,9 +174,29 @@ int fixForFastPlayback(char* source, char* dest) {
         goto error_out;
     }
 
+    /* read next move_atom_size bytes
+     * since we read/write file in same time, we mush read before write into
+     * the buffer
+     */
+    temp_buf = malloc(moov_atom_size);
+    if (!temp_buf) {
+        printf("Cannot allocate %"PRIu64" byte for temp buf \n", moov_atom_size);
+        goto error_out;
+    }
+    /* seek to after ftyp_atom */
+    lseek(infile_fd, ftyp_atom_size, SEEK_SET);
+    if (read(infile_fd, temp_buf, moov_atom_size) < 0) {
+        perror(path);
+        goto error_out;
+    }
+    start_offset += moov_atom_size;
+
+    /* end read temp buffer bytes */
+
+
+
     /* close; will be re-opened later */
     close(infile_fd);
-    infile = NULL;
 
     /* crawl through the moov chunk in search of stco or co64 atoms */
     for (i = 4; i < moov_atom_size - 4; i++) {
@@ -225,9 +242,9 @@ int fixForFastPlayback(char* source, char* dest) {
         }
     }
 
-    infile_fd = open(source, O_RDONLY);
+    infile_fd = open(path, O_RDONLY);
     if (infile_fd < 0) {
-        perror(source);
+        perror(path);
         goto error_out;
     }
 
@@ -236,10 +253,11 @@ int fixForFastPlayback(char* source, char* dest) {
         last_offset -= start_offset;
     }
 
-    outfile_fd = open(dest, O_WRONLY);
+
+    outfile_fd = open(path, O_WRONLY);
     printf("outfile fd: %d\n", outfile_fd);
     if (outfile_fd < 0) {
-        perror(dest);
+        perror(path);
         goto error_out;
     }
 
@@ -247,45 +265,49 @@ int fixForFastPlayback(char* source, char* dest) {
     if (ftyp_atom_size > 0) {
         printf(" writing ftyp atom...\n");
         if (write(outfile_fd, ftyp_atom, ftyp_atom_size) < 0) {
-            perror(dest);
+            perror(path);
             goto error_out;
         }
     }
 
-    /* dump the new moov atom */
-    printf(" writing moov atom...\n");
-    if (write(outfile_fd, moov_atom, moov_atom_size) < 0) {
-        perror(dest);
-        goto error_out;
-    }
-
-    /* copy the remainder of the infile, from offset 0 -> last_offset - 1 */
-    printf(" copying rest of file...\n");
+    i = 0;
+    /*
+     we must use 2 buffer to read/write 
+     */
     while (last_offset) {
-        if (last_offset > COPY_BUFFER_SIZE)
-            bytes_to_copy = COPY_BUFFER_SIZE;
+//        printf("last offset: %"PRIu64"  \n", last_offset);
+        if (i = 0) 
+            printf(" writing moov atom...\n");
         else
-            bytes_to_copy = last_offset;
-
-//        if (fread(copy_buffer, bytes_to_copy, 1, infile) != 1) {
-        if (read(infile_fd, copy_buffer, bytes_to_copy) < 0) {
-            perror(source);
+            i = 1;
+        if (write(outfile_fd, moov_atom, moov_atom_size) < 0) {
+            perror(path);
             goto error_out;
         }
-        if (write(outfile_fd, copy_buffer, bytes_to_copy) < 1) {
-            perror(dest);
+        if (last_offset < moov_atom_size) moov_atom_size = last_offset;
+        if (read(infile_fd, moov_atom, moov_atom_size) < 0) {
+            perror(path);
             goto error_out;
         }
+        last_offset -= moov_atom_size;
 
-        last_offset -= bytes_to_copy;
+
+        if (write(outfile_fd, temp_buf, moov_atom_size) < 0) {
+            perror(path);
+            goto error_out;
+        }
+        if (last_offset < moov_atom_size) moov_atom_size = last_offset;
+        if (read(infile_fd, temp_buf, moov_atom_size) < 0) {
+            perror(path);
+            goto error_out;
+        }
+        last_offset -= moov_atom_size;
     }
-
-//    fclose(infile);
-//    fclose(outfile);
     close(infile_fd);
     close(outfile_fd);
     free(moov_atom);
     free(ftyp_atom);
+    free(temp_buf);
 
     return 0;
 
@@ -294,11 +316,15 @@ error_out:
         close(infile_fd);
     if (outfile_fd > 0)
         close(outfile_fd);
-    free(moov_atom);
-    free(ftyp_atom);
+    if (moov_atom) 
+        free(moov_atom);
+    if (ftyp_atom) 
+        free(ftyp_atom);
+    if (temp_buf) 
+        free(temp_buf);
     return 1;
 }
 
 int main(int argc, char* argv[]) {
-    fixForFastPlayback(argv[1], argv[2]);
+    fixForFastPlayback(argv[1]);
 }
