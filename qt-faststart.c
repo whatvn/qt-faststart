@@ -276,10 +276,10 @@ int fixForFastPlayback(char* path) {
      */
     while (last_offset) {
 //        printf("last offset: %"PRIu64"  \n", last_offset);
-        if (i = 0) 
+        if (i == 0) { 
             printf(" writing moov atom...\n");
-        else
             i = 1;
+        }             
         if (write(outfile_fd, moov_atom, moov_atom_size) < 0) {
             perror(path);
             goto error_out;
