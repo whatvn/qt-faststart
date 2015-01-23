@@ -175,7 +175,7 @@ int fixForFastPlayback(char* path) {
     }
 
     /* read next move_atom_size bytes
-     * since we read/write file in same time, we mush read before write into
+     * since we read/write file in same time, we must read before write into
      * the buffer
      */
     temp_buf = malloc(moov_atom_size);
