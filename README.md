@@ -14,7 +14,7 @@ Run ``make``
 
 To use: 
 
-``./qt-faststart input.mp4`` 
+``./qt-faststart demo3.mp4`` 
 
 
 Easy, right? 
