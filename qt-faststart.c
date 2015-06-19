@@ -5,6 +5,7 @@
 #include <sys/stat.h> 
 #include <fcntl.h>
 #include <unistd.h>
+#include <malloc.h>
 
 
 #ifdef __MINGW32__
@@ -82,7 +83,9 @@ int fixForFastPlayback(char* path) {
      * at the end */
 
     while (1) {
-        if (read(infile_fd, atom_bytes, ATOM_PREAMBLE_SIZE) == 0) break;
+        ssize_t r;
+        r = read(infile_fd, atom_bytes, ATOM_PREAMBLE_SIZE);
+        if (r == 0) break;
         atom_size = (uint32_t) BE_32(&atom_bytes[0]);
         atom_type = BE_32(&atom_bytes[4]);
         /* keep ftyp atom */
@@ -95,13 +98,14 @@ int fixForFastPlayback(char* path) {
                         atom_size);
                 goto error_out;
             }
-            lseek(infile_fd, -ATOM_PREAMBLE_SIZE, SEEK_CUR);
-            perror("Seek to:");
-            printf("atom_size: %"PRIu64" \n", atom_size);
-            if (read(infile_fd, ftyp_atom, atom_size) < 0) {
+            start_offset = lseek(infile_fd, -ATOM_PREAMBLE_SIZE, SEEK_CUR);
+            printf("start_offset before verify: %"PRIu64" \n", start_offset);
+            r = read(infile_fd, ftyp_atom, atom_size);
+            if (r < 0) {
                 perror(path);
                 goto error_out;
             }
+            printf("atom_size: %"PRIu64" \n", atom_size);
             start_offset = atom_size;
             printf("start_offset to verify: %"PRIu64" \n", start_offset);
         } else {
@@ -155,6 +159,8 @@ int fixForFastPlayback(char* path) {
     /* moov atom was, in fact, the last atom in the chunk; load the whole
      * moov atom */
     last_offset = lseek(infile_fd, -atom_size, SEEK_END);
+    printf("last_offset: %"PRIu64" \n", last_offset);
+
     moov_atom_size = atom_size;
     moov_atom = malloc(moov_atom_size);
     if (!moov_atom) {
@@ -166,6 +172,7 @@ int fixForFastPlayback(char* path) {
         perror(path);
         goto error_out;
     }
+
 
     /* this utility does not support compressed atoms yet, so disqualify
      * files with compressed QT atoms */
@@ -189,6 +196,8 @@ int fixForFastPlayback(char* path) {
         perror(path);
         goto error_out;
     }
+
+
     start_offset += moov_atom_size;
 
     /* end read temp buffer bytes */
@@ -247,60 +256,73 @@ int fixForFastPlayback(char* path) {
         perror(path);
         goto error_out;
     }
-
+    printf("start_offset after patching %"PRIu64" \n", start_offset);
     if (start_offset > 0) { /* seek after ftyp atom */
         lseek(infile_fd, start_offset, SEEK_SET);
         last_offset -= start_offset;
     }
 
-
+    printf("last_offset: %"PRIu64" \n", last_offset);
     outfile_fd = open(path, O_WRONLY);
     printf("outfile fd: %d\n", outfile_fd);
     if (outfile_fd < 0) {
         perror(path);
         goto error_out;
     }
-
+    ssize_t written;
     /* dump the same ftyp atom */
     if (ftyp_atom_size > 0) {
         printf(" writing ftyp atom...\n");
-        if (write(outfile_fd, ftyp_atom, ftyp_atom_size) < 0) {
+        written = write(outfile_fd, ftyp_atom, ftyp_atom_size);
+        if (written < 0) {
             perror(path);
             goto error_out;
         }
     }
 
+    printf("bytes written: %zu  \n", written);
     i = 0;
     /*
      we must use 2 buffer to read/write 
      */
+    printf("moov_atom_size: %"PRIu64" \n", moov_atom_size);
     while (last_offset) {
-//        printf("last offset: %"PRIu64"  \n", last_offset);
-        if (i == 0) { 
-            printf(" writing moov atom...\n");
-            i = 1;
-        }             
-        if (write(outfile_fd, moov_atom, moov_atom_size) < 0) {
+        ssize_t r;
+        if (i == 0) {
+            printf("writing moov atom...\n");
+        }
+        written = write(outfile_fd, moov_atom, moov_atom_size);
+        if (written < 0) {
             perror(path);
             goto error_out;
         }
-        if (last_offset < moov_atom_size) moov_atom_size = last_offset;
-        if (read(infile_fd, moov_atom, moov_atom_size) < 0) {
+        if (last_offset < moov_atom_size) {
+            moov_atom_size = last_offset;
+        }
+        r = read(infile_fd, moov_atom, moov_atom_size);
+        if (r < 0) {
             perror(path);
             goto error_out;
+        } 
+        
+        /*this do the trick*/
+        if (i == 1) {
+            last_offset -= moov_atom_size;
         }
-        last_offset -= moov_atom_size;
-
-
-        if (write(outfile_fd, temp_buf, moov_atom_size) < 0) {
+        i = 1;
+        written = write(outfile_fd, temp_buf, moov_atom_size);
+        if (written < 0) {
             perror(path);
             goto error_out;
+        } 
+        if (last_offset < moov_atom_size) {
+            moov_atom_size = last_offset;
         }
-        if (last_offset < moov_atom_size) moov_atom_size = last_offset;
-        if (read(infile_fd, temp_buf, moov_atom_size) < 0) {
+        r = read(infile_fd, temp_buf, moov_atom_size);
+        if (r < 0) {
             perror(path);
             goto error_out;
-        }
+        } 
         last_offset -= moov_atom_size;
     }
     close(infile_fd);
@@ -311,17 +333,24 @@ int fixForFastPlayback(char* path) {
 
     return 0;
 
+    /* clean up */
 error_out:
-    if (infile_fd > 0)
+    if (infile_fd > 0) {
         close(infile_fd);
-    if (outfile_fd > 0)
+    }
+    if (outfile_fd > 0) {
         close(outfile_fd);
-    if (moov_atom) 
+    }
+    if (moov_atom) {
         free(moov_atom);
-    if (ftyp_atom) 
+    }
+    if (ftyp_atom) {
         free(ftyp_atom);
-    if (temp_buf) 
+    }
+    if (temp_buf) {
         free(temp_buf);
+    }
+
     return 1;
 }
 
